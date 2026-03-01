@@ -1,0 +1,13 @@
+{
+  "name": "com.jayt.facetracking-unity",
+  "version": "1.0.0",
+  "displayName": "facetracking-unity",
+  "description": "",
+  "unity": "2022.3",
+  "keywords": [
+    "ifacialmocap"
+  ],
+  "author": {
+    "name": "JayT"
+  }
+}
