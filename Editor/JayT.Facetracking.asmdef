@@ -1,6 +1,6 @@
 {
     "name": "JayT.Facetracking",
-    "rootNamespace": "JayT.Facetracking.Runtime",
+    "rootNamespace": "JayT.Facetracking.Editor",
     "references": [
 			
     ],
