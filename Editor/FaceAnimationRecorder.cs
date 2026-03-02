@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.Timeline;
 using UnityEngine.Playables;
+using System.Collections.Generic;
 
 #if UNITY_EDITOR
 using UnityEditor;
@@ -8,7 +9,7 @@ using UnityEditor.Animations;
 #endif
 
 /// <summary>
-/// BlendShape録画コンポーネント。
+/// BlendShape録画コンポーネント。複数のSkinnedMeshRendererを同時録画し、個別にアニメーションクリップを生成します。
 ///
 /// 【保存ファイル名】
 /// {prefix}-{SMR名}-{Timeline名}-s{開始フレーム:D4}-e{終了フレーム:D4}-take{N}.anim
@@ -16,12 +17,21 @@ using UnityEditor.Animations;
 /// </summary>
 namespace JayT.Facetracking.Editor
 {
+    [System.Serializable]
+    public class RendererEntry
+    {
+        [Tooltip("録画対象のSkinnedMeshRenderer")]
+        public SkinnedMeshRenderer renderer;
+        [Tooltip("ファイル名Prefix（空白可）例: avatar-name")]
+        public string prefix = "";
+    }
+
     [ExecuteAlways]
     public class FaceAnimationRecorder : MonoBehaviour
     {
         [Header("録画対象（必須）")]
-        [Tooltip("BlendShapeを持つSkinnedMeshRenderer")]
-        public SkinnedMeshRenderer targetRenderer;
+        [Tooltip("同時録画するSkinnedMeshRendererのリスト。各エントリに個別のPrefixを設定可能")]
+        public List<RendererEntry> targets = new List<RendererEntry>();
 
         // CustomEditor で描画するため HideInInspector
         // 同シーンならシリアライズ参照として保持、別シーンは下記2フィールドで管理
@@ -30,10 +40,6 @@ namespace JayT.Facetracking.Editor
         // クロスシーン参照の永続化（シーン名＋オブジェクト名で Play Mode 時に解決）
         [SerializeField, HideInInspector] private string directorSceneName = "";
         [SerializeField, HideInInspector] private string directorObjectName = "";
-
-        [Header("ファイル命名")]
-        [Tooltip("ファイル名Prefix（空白可）例: avatar-name")]
-        public string prefix = "";
 
         [Header("保存先")]
         [Tooltip("保存先フォルダ（Assets/ 以下）")]
@@ -55,12 +61,14 @@ namespace JayT.Facetracking.Editor
             set => EditorPrefs.SetInt(TakeKey, Mathf.Max(1, value));
         }
 
-        private GameObjectRecorder recorder;
+        // 録画中の Recorder・Entry ペア（StartRecording で確定）
+        private List<(GameObjectRecorder recorder, RendererEntry entry)> activeRecordings
+            = new List<(GameObjectRecorder, RendererEntry)>();
         private double lastEditorTime;
         private float recordedDuration;
         private int recordingStartFrame;
         private int recordingEndFrame;
-        private Animator suppressedAnimator; // REC中に無効化したAnimator
+        private List<Animator> suppressedAnimators = new List<Animator>(); // REC中に無効化したAnimator
 
         // ---- ライフサイクル ----
 
@@ -105,37 +113,20 @@ namespace JayT.Facetracking.Editor
             Debug.LogWarning($"[FaceAnimationRecorder] PlayableDirector '{directorObjectName}' が見つかりません（シーン '{directorSceneName}' がロードされているか確認）");
         }
 
-        void OnEnable()
-        {
-            SubscribeDirector(director);
-        }
-
-        void OnDisable()
-        {
-            UnsubscribeDirector(director);
-            CancelRecording();
-        }
+        void OnEnable()  { SubscribeDirector(director); }
+        void OnDisable() { UnsubscribeDirector(director); CancelRecording(); }
 
         // ---- イベント登録 ----
 
-        private void SubscribeDirector(PlayableDirector d)
-        {
-            if (d == null) return;
-            d.stopped += OnDirectorStopped;
-        }
-
-        private void UnsubscribeDirector(PlayableDirector d)
-        {
-            if (d == null) return;
-            d.stopped -= OnDirectorStopped;
-        }
+        private void SubscribeDirector(PlayableDirector d)   { if (d != null) d.stopped += OnDirectorStopped; }
+        private void UnsubscribeDirector(PlayableDirector d) { if (d != null) d.stopped -= OnDirectorStopped; }
 
         // ---- 公開 API ----
 
         public bool IsRecording => isRecording;
         public bool IsSaving    => isSaving;
 
-        /// <summary>REC START: startFrame から Timeline を再生して録画を開始する</summary>
+        /// <summary>REC START: startFrame から Timeline を再生して全対象の録画を開始する</summary>
         public void StartRecording()
         {
             if (!ValidateSetup()) return;
@@ -153,7 +144,6 @@ namespace JayT.Facetracking.Editor
 
             // 手動シーク後など、どんな再生状態でも確実に startFrame から再生するため:
             //   Stop()  → 再生中・一時停止・シーク済み状態をすべてリセット
-            //             （Play() は「すでに再生中」だと即 return するため Stop が必須）
             //   initialTime → Stop()+Play() でグラフが再構築された場合の開始位置
             //   Play()  → 再生開始
             //   time    → グラフが再利用された（再構築されなかった）場合の明示的なシーク
@@ -164,25 +154,36 @@ namespace JayT.Facetracking.Editor
             director.time = startTime;
             director.Evaluate();
 
-            // REC中はAnimatorがblendShapeを上書きしないよう無効化
-            var anim = targetRenderer.GetComponent<Animator>();
-            if (anim != null && anim.enabled)
+            // 各エントリについて Animator 無効化・Recorder 準備
+            activeRecordings.Clear();
+            suppressedAnimators.Clear();
+
+            foreach (var entry in targets)
             {
-                anim.enabled = false;
-                suppressedAnimator = anim;
-                Debug.Log("[FaceAnimationRecorder] Animator を一時無効化しました（REC終了時に復元）");
+                if (entry.renderer == null) continue;
+
+                // REC中はAnimatorがblendShapeを上書きしないよう無効化
+                var anim = entry.renderer.GetComponent<Animator>();
+                if (anim != null && anim.enabled)
+                {
+                    anim.enabled = false;
+                    suppressedAnimators.Add(anim);
+                    Debug.Log($"[FaceAnimationRecorder] Animator を一時無効化: {entry.renderer.gameObject.name}");
+                }
+
+                // 録画セットアップ（Evaluate() でブレンドシェイプが確定した後に開始）
+                var rec = new GameObjectRecorder(entry.renderer.gameObject);
+                rec.BindComponentsOfType<SkinnedMeshRenderer>(entry.renderer.gameObject, false);
+                activeRecordings.Add((rec, entry));
             }
 
-            // 録画セットアップ（Evaluate() でブレンドシェイプが確定した後に開始）
-            recorder = new GameObjectRecorder(targetRenderer.gameObject);
-            recorder.BindComponentsOfType<SkinnedMeshRenderer>(targetRenderer.gameObject, false);
             isRecording = true;
             recordedDuration = 0f;
             recordingStartFrame = startFrame;
             lastEditorTime = EditorApplication.timeSinceStartup;
             EditorApplication.update += EditorUpdate;
 
-            Debug.Log($"[FaceAnimationRecorder] 録画開始 (s{recordingStartFrame:D4})");
+            Debug.Log($"[FaceAnimationRecorder] 録画開始 ({activeRecordings.Count}対象, s{recordingStartFrame:D4})");
         }
 
         /// <summary>STOP & SAVE: director を停止し録画データを保存する</summary>
@@ -201,7 +202,7 @@ namespace JayT.Facetracking.Editor
 
         private void EditorUpdate()
         {
-            if (!isRecording || recorder == null)
+            if (!isRecording || activeRecordings.Count == 0)
             {
                 EditorApplication.update -= EditorUpdate;
                 return;
@@ -212,7 +213,8 @@ namespace JayT.Facetracking.Editor
             lastEditorTime = now;
             recordedDuration += dt;
 
-            recorder.TakeSnapshot(dt);
+            foreach (var (rec, _) in activeRecordings)
+                rec.TakeSnapshot(dt);
         }
 
         private void OnDirectorStopped(PlayableDirector pd)
@@ -221,7 +223,7 @@ namespace JayT.Facetracking.Editor
 
             EditorApplication.update -= EditorUpdate;
             isRecording = false;
-            RestoreAnimator();
+            RestoreAnimators();
 
             float fps = GetFps();
             recordingEndFrame = recordingStartFrame + Mathf.RoundToInt(recordedDuration * fps);
@@ -229,7 +231,7 @@ namespace JayT.Facetracking.Editor
             // isSaving を先に立てて Inspector が「保存中...」を表示できるようにしてから
             // 次フレームで重い保存処理を実行する
             isSaving = true;
-            EditorApplication.delayCall += SaveClip;
+            EditorApplication.delayCall += SaveClips;
         }
 
         private void CancelRecording()
@@ -237,26 +239,32 @@ namespace JayT.Facetracking.Editor
             if (!isRecording) return;
             EditorApplication.update -= EditorUpdate;
             isRecording = false;
-            recorder = null;
-            RestoreAnimator();
+            activeRecordings.Clear();
+            RestoreAnimators();
             Debug.LogWarning("[FaceAnimationRecorder] 録画がキャンセルされました（保存されていません）");
         }
 
-        private void RestoreAnimator()
+        private void RestoreAnimators()
         {
-            if (suppressedAnimator == null) return;
-            suppressedAnimator.enabled = true;
-            suppressedAnimator = null;
-            Debug.Log("[FaceAnimationRecorder] Animator を復元しました");
+            foreach (var anim in suppressedAnimators)
+            {
+                if (anim != null)
+                {
+                    anim.enabled = true;
+                    Debug.Log($"[FaceAnimationRecorder] Animator を復元: {anim.gameObject.name}");
+                }
+            }
+            suppressedAnimators.Clear();
         }
 
         // ---- 保存 ----
 
-        private void SaveClip()
+        private void SaveClips()
         {
-            if (recorder == null)
+            if (activeRecordings.Count == 0)
             {
-                Debug.LogError("[FaceAnimationRecorder] recorder が null です");
+                Debug.LogError("[FaceAnimationRecorder] 録画データがありません");
+                isSaving = false;
                 return;
             }
 
@@ -265,46 +273,63 @@ namespace JayT.Facetracking.Editor
 
             float fps = GetFps();
             string timelineName = director.playableAsset != null ? director.playableAsset.name : "Timeline";
-            string objectName = targetRenderer.gameObject.name;
-            string prefixPart = string.IsNullOrEmpty(prefix) ? "" : $"{prefix}-";
 
-            // テイク番号を自動カウントアップ（既存ファイルと重複しないまで加算）
+            // 全クリップについて重複しないテイク番号を探す
             int take = NextTake;
-            string savePath;
-            do
+            while (true)
             {
-                string fileName = $"{prefixPart}{objectName}-{timelineName}-s{recordingStartFrame:D4}-e{recordingEndFrame:D4}-take{take}.anim";
-                savePath = $"{saveFolder}/{fileName}";
+                bool anyExists = false;
+                foreach (var (_, entry) in activeRecordings)
+                {
+                    if (System.IO.File.Exists(BuildSavePath(entry, timelineName, take)))
+                    {
+                        anyExists = true;
+                        break;
+                    }
+                }
+                if (!anyExists) break;
                 take++;
-            } while (System.IO.File.Exists(savePath));
-            take--; // ループで余分にインクリメントした分を戻す
-
-            AnimationClip clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(savePath);
-            if (clip == null)
-            {
-                clip = new AnimationClip();
-                AssetDatabase.CreateAsset(clip, savePath);
             }
 
-            recorder.SaveToClip(clip, fps);
-
-            // BlendShape 以外の float カーブを削除（ボーン等）
-            foreach (var binding in AnimationUtility.GetCurveBindings(clip))
+            foreach (var (rec, entry) in activeRecordings)
             {
-                if (!binding.propertyName.StartsWith("blendShape."))
-                    AnimationUtility.SetEditorCurve(clip, binding, null);
+                string savePath = BuildSavePath(entry, timelineName, take);
+
+                AnimationClip clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(savePath);
+                if (clip == null)
+                {
+                    clip = new AnimationClip();
+                    AssetDatabase.CreateAsset(clip, savePath);
+                }
+
+                rec.SaveToClip(clip, fps);
+
+                // BlendShape 以外の float カーブを削除（ボーン等）
+                foreach (var binding in AnimationUtility.GetCurveBindings(clip))
+                {
+                    if (!binding.propertyName.StartsWith("blendShape."))
+                        AnimationUtility.SetEditorCurve(clip, binding, null);
+                }
+                // オブジェクト参照カーブを削除（マテリアル参照等）
+                foreach (var binding in AnimationUtility.GetObjectReferenceCurveBindings(clip))
+                    AnimationUtility.SetObjectReferenceCurve(clip, binding, null);
+
+                Debug.Log($"[FaceAnimationRecorder] 保存完了: {savePath}  ({recordedDuration:F1}秒 @ {fps}fps)");
             }
-            // オブジェクト参照カーブを削除（マテリアル参照等）
-            foreach (var binding in AnimationUtility.GetObjectReferenceCurveBindings(clip))
-                AnimationUtility.SetObjectReferenceCurve(clip, binding, null);
 
             AssetDatabase.SaveAssets();
 
             NextTake = take + 1; // EditorPrefs に永続保存
-
-            recorder = null;
+            activeRecordings.Clear();
             isSaving = false;
-            Debug.Log($"[FaceAnimationRecorder] 保存完了: {savePath}  ({recordedDuration:F1}秒 @ {fps}fps)");
+        }
+
+        private string BuildSavePath(RendererEntry entry, string timelineName, int take)
+        {
+            string objectName = entry.renderer.gameObject.name;
+            string prefixPart = string.IsNullOrEmpty(entry.prefix) ? "" : $"{entry.prefix}-";
+            string fileName = $"{prefixPart}{objectName}-{timelineName}-s{recordingStartFrame:D4}-e{recordingEndFrame:D4}-take{take}.anim";
+            return $"{saveFolder}/{fileName}";
         }
 
         // ---- ユーティリティ ----
@@ -323,9 +348,13 @@ namespace JayT.Facetracking.Editor
                 Debug.LogWarning("[FaceAnimationRecorder] Play Mode でのみ録画できます", this);
                 return false;
             }
-            if (targetRenderer == null)
+            bool hasValidRenderer = false;
+            if (targets != null)
+                foreach (var entry in targets)
+                    if (entry.renderer != null) { hasValidRenderer = true; break; }
+            if (!hasValidRenderer)
             {
-                Debug.LogError("[FaceAnimationRecorder] SkinnedMeshRenderer が未設定です", this);
+                Debug.LogError("[FaceAnimationRecorder] 有効な SkinnedMeshRenderer が設定されていません", this);
                 return false;
             }
             if (director == null)
@@ -353,12 +382,14 @@ namespace JayT.Facetracking.Editor
         private SerializedProperty startFrameProp;
         private SerializedProperty sceneNameProp;
         private SerializedProperty objectNameProp;
+        private SerializedProperty targetsProp;
 
         void OnEnable()
         {
-            startFrameProp  = serializedObject.FindProperty("startFrame");
-            sceneNameProp   = serializedObject.FindProperty("directorSceneName");
-            objectNameProp  = serializedObject.FindProperty("directorObjectName");
+            startFrameProp = serializedObject.FindProperty("startFrame");
+            sceneNameProp  = serializedObject.FindProperty("directorSceneName");
+            objectNameProp = serializedObject.FindProperty("directorObjectName");
+            targetsProp    = serializedObject.FindProperty("targets");
             EditorApplication.update += Repaint;
         }
 
@@ -372,8 +403,8 @@ namespace JayT.Facetracking.Editor
             var rec = (FaceAnimationRecorder)target;
             serializedObject.Update();
 
-            // ---- 録画対象 ----
-            EditorGUILayout.PropertyField(serializedObject.FindProperty("targetRenderer"));
+            // ---- 録画対象リスト ----
+            EditorGUILayout.PropertyField(targetsProp, new GUIContent("録画対象"), true);
 
             // ---- Timeline連携 ----
             EditorGUILayout.Space(4);
@@ -382,7 +413,6 @@ namespace JayT.Facetracking.Editor
             DrawDirectorField(rec);
 
             // ---- その他フィールド ----
-            EditorGUILayout.PropertyField(serializedObject.FindProperty("prefix"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("saveFolder"));
 
             serializedObject.ApplyModifiedProperties();
@@ -457,12 +487,13 @@ namespace JayT.Facetracking.Editor
                 "【使い方】\n" +
                 "1. Unity を Play Mode にしてフェイストラッキングを起動\n" +
                 "2. Start Frame を設定して REC START\n" +
-                "   → Timeline がその位置から再生・録画開始\n" +
+                "   → Timeline がその位置から再生・全対象を同時録画開始\n" +
                 "3. Timeline 終端 または STOP & SAVE で自動保存\n\n" +
                 "【ファイル名】\n" +
-                "{prefix}-{SMR名}-{Timeline名}-s0000-e0000-take1.anim\n\n" +
+                "{prefix}-{SMR名}-{Timeline名}-s0000-e0000-take1.anim\n" +
+                "（対象ごとに個別のクリップが生成されます）\n\n" +
                 "【Timeline への配置】\n" +
-                "Animation Track のバインド先 = targetRenderer の GameObject(animatorが必要)",
+                "Animation Track のバインド先 = 各 renderer の GameObject（Animator が必要）",
                 MessageType.Info);
         }
 
