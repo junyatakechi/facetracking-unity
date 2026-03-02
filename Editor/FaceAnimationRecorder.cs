@@ -12,14 +12,16 @@ using UnityEditor.Animations;
 /// BlendShape録画コンポーネント。複数のSkinnedMeshRendererを同時録画し、個別にアニメーションクリップを生成します。
 ///
 /// 【保存ファイル名】
-/// {prefix}-{SMR名}-{Timeline名}-s{開始フレーム:D4}-e{終了フレーム:D4}-take{N}.anim
-/// 例: avatar-Face-MyTimeline-s0030-e0090-take1.anim
+/// {Timeline名}-take{N}-{prefix}-{SMR名}-s{開始フレーム:D4}-e{終了フレーム:D4}.anim
+/// 例: MyTimeline-take1-avatar-Face-s0030-e0090.anim
 /// </summary>
 namespace JayT.Facetracking.Editor
 {
     [System.Serializable]
     public class RendererEntry
     {
+        [Tooltip("チェックを外すと録画対象から除外されます")]
+        public bool enabled = true;
         [Tooltip("録画対象のSkinnedMeshRenderer")]
         public SkinnedMeshRenderer renderer;
         [Tooltip("ファイル名Prefix（空白可）例: avatar-name")]
@@ -160,7 +162,7 @@ namespace JayT.Facetracking.Editor
 
             foreach (var entry in targets)
             {
-                if (entry.renderer == null) continue;
+                if (!entry.enabled || entry.renderer == null) continue;
 
                 // REC中はAnimatorがblendShapeを上書きしないよう無効化
                 var anim = entry.renderer.GetComponent<Animator>();
@@ -327,8 +329,8 @@ namespace JayT.Facetracking.Editor
         private string BuildSavePath(RendererEntry entry, string timelineName, int take)
         {
             string objectName = entry.renderer.gameObject.name;
-            string prefixPart = string.IsNullOrEmpty(entry.prefix) ? "" : $"{entry.prefix}-";
-            string fileName = $"{prefixPart}{objectName}-{timelineName}-s{recordingStartFrame:D4}-e{recordingEndFrame:D4}-take{take}.anim";
+            string prefixPart = string.IsNullOrEmpty(entry.prefix) ? "" : $"-{entry.prefix}";
+            string fileName = $"{timelineName}-take{take}{prefixPart}-{objectName}-s{recordingStartFrame:D4}-e{recordingEndFrame:D4}.anim";
             return $"{saveFolder}/{fileName}";
         }
 
@@ -490,7 +492,7 @@ namespace JayT.Facetracking.Editor
                 "   → Timeline がその位置から再生・全対象を同時録画開始\n" +
                 "3. Timeline 終端 または STOP & SAVE で自動保存\n\n" +
                 "【ファイル名】\n" +
-                "{prefix}-{SMR名}-{Timeline名}-s0000-e0000-take1.anim\n" +
+                "{Timeline名}-take1-{prefix}-{SMR名}-s0000-e0000.anim\n" +
                 "（対象ごとに個別のクリップが生成されます）\n\n" +
                 "【Timeline への配置】\n" +
                 "Animation Track のバインド先 = 各 renderer の GameObject（Animator が必要）",
