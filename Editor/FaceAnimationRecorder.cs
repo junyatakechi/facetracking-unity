@@ -43,8 +43,9 @@ namespace JayT.Facetracking.Editor
         // 録画開始フレーム（Inspector の録画コントロール欄に表示）
         [SerializeField, HideInInspector] private int startFrame = 0;
 
-        // 録画状態（Custom Editor で参照）
+        // 録画状態・保存状態（Custom Editor で参照）
         [SerializeField, HideInInspector] private bool isRecording = false;
+        private bool isSaving = false;
 
         // テイク番号（EditorPrefs に保存 → Play Mode 終了でリセットされない）
         private string TakeKey => $"JayT.FaceAnimationRecorder.NextTake.{Application.dataPath}";
@@ -131,6 +132,7 @@ namespace JayT.Facetracking.Editor
         // ---- 公開 API ----
 
         public bool IsRecording => isRecording;
+        public bool IsSaving    => isSaving;
 
         /// <summary>REC START: startFrame から Timeline を再生して録画を開始する</summary>
         public void StartRecording()
@@ -261,20 +263,26 @@ namespace JayT.Facetracking.Editor
                 AssetDatabase.CreateAsset(clip, savePath);
             }
 
+            isSaving = true;
+
             recorder.SaveToClip(clip, fps);
 
-            // BlendShape 以外のカーブを削除する
+            // BlendShape 以外の float カーブを削除（ボーン等）
             foreach (var binding in AnimationUtility.GetCurveBindings(clip))
             {
                 if (!binding.propertyName.StartsWith("blendShape."))
                     AnimationUtility.SetEditorCurve(clip, binding, null);
             }
+            // オブジェクト参照カーブを削除（マテリアル参照等）
+            foreach (var binding in AnimationUtility.GetObjectReferenceCurveBindings(clip))
+                AnimationUtility.SetObjectReferenceCurve(clip, binding, null);
 
             AssetDatabase.SaveAssets();
 
             NextTake = take + 1; // EditorPrefs に永続保存
 
             recorder = null;
+            isSaving = false;
             Debug.Log($"[FaceAnimationRecorder] 保存完了: {savePath}  ({recordedDuration:F1}秒 @ {fps}fps)");
         }
 
@@ -361,10 +369,11 @@ namespace JayT.Facetracking.Editor
             EditorGUILayout.Space(10);
             EditorGUILayout.LabelField("録画コントロール", EditorStyles.boldLabel);
 
-            bool isRec = rec.IsRecording;
+            bool isRec    = rec.IsRecording;
+            bool isSaving = rec.IsSaving;
 
-            // 録画中はフレーム入力を無効化
-            using (new EditorGUI.DisabledScope(isRec))
+            // 録画中・保存中はフレーム入力を無効化
+            using (new EditorGUI.DisabledScope(isRec || isSaving))
             {
                 EditorGUILayout.PropertyField(startFrameProp, new GUIContent("Start Frame", "この位置（フレーム）から Timeline を再生して録画を開始します"));
                 if (startFrameProp.intValue < 0) startFrameProp.intValue = 0;
@@ -388,7 +397,15 @@ namespace JayT.Facetracking.Editor
 
             var prevBg = GUI.backgroundColor;
 
-            if (!isRec)
+            if (isSaving)
+            {
+                GUI.backgroundColor = Color.gray;
+                using (new EditorGUI.DisabledScope(true))
+                    GUILayout.Button("●  REC START", GUILayout.Height(40));
+                EditorGUILayout.Space(2);
+                EditorGUILayout.HelpBox("保存中... しばらくお待ちください", MessageType.Warning);
+            }
+            else if (!isRec)
             {
                 using (new EditorGUI.DisabledScope(!Application.isPlaying))
                 {
