@@ -41,6 +41,9 @@ namespace JayT.Facetracking.Editor
         // 録画状態（Custom Editor で参照）
         [SerializeField, HideInInspector] private bool isRecording = false;
 
+        // REC START ボタンで明示的に録画を要求したときだけ true になるフラグ
+        private bool recordingRequested = false;
+
         private GameObjectRecorder recorder;
         private double lastEditorTime;
         private float recordedDuration;
@@ -109,8 +112,12 @@ namespace JayT.Facetracking.Editor
             UnsubscribeDirector(director);
             SubscribeDirector(director);
 
-            director.time = startTime;
+            recordingRequested = true;
             director.Play();
+            // Play() がグラフを初期化した後に時刻を設定する
+            // （Play() より前に設定するとグラフ再構築時にリセットされる）
+            director.time = startTime;
+            director.Evaluate(); // 強制的に startTime の位置へシーク
             // 以降は OnDirectorPlayed が録画を開始する
         }
 
@@ -130,6 +137,10 @@ namespace JayT.Facetracking.Editor
 
         private void OnDirectorPlayed(PlayableDirector pd)
         {
+            // REC START ボタン経由の再生でなければ録画しない
+            if (!recordingRequested) return;
+            recordingRequested = false;
+
             if (isRecording) return;
 
             recorder = new GameObjectRecorder(targetRenderer.gameObject);
