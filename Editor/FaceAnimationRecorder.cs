@@ -114,11 +114,18 @@ namespace JayT.Facetracking.Editor
 
             double startTime = startFrame / (double)GetFps();
 
-            // Play() でグラフを初期化した後に time を設定する
-            // （Play() より前に設定するとグラフ再構築時にリセットされる場合がある）
+            // 手動シーク後など、どんな再生状態でも確実に startFrame から再生するため:
+            //   Stop()  → 再生中・一時停止・シーク済み状態をすべてリセット
+            //             （Play() は「すでに再生中」だと即 return するため Stop が必須）
+            //   initialTime → Stop()+Play() でグラフが再構築された場合の開始位置
+            //   Play()  → 再生開始
+            //   time    → グラフが再利用された（再構築されなかった）場合の明示的なシーク
+            //   Evaluate() → startFrame のブレンドシェイプ値を即時確定
+            director.Stop();
+            director.initialTime = startTime;
             director.Play();
             director.time = startTime;
-            director.Evaluate(); // startFrame の位置に強制シーク
+            director.Evaluate();
 
             // 録画セットアップ（Evaluate() でブレンドシェイプが確定した後に開始）
             recorder = new GameObjectRecorder(targetRenderer.gameObject);
