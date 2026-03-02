@@ -42,6 +42,20 @@ namespace JayT.Facetracking.Editor.IFacialMocap
             [HideInInspector] public bool initialized;
         }
 
+        /// <summary>アバターごとの眼球ボーン設定</summary>
+        [Serializable]
+        public class EyeBoneSetting
+        {
+            [Tooltip("左眼球ボーン。eyeLookXxx_L の値で localRotation を制御します。")]
+            public Transform leftEyeBone;
+            [Tooltip("右眼球ボーン。eyeLookXxx_R の値で localRotation を制御します。")]
+            public Transform rightEyeBone;
+            [Tooltip("眼球の上下回転スケール (度単位)。負値で上下を反転。")]
+            public float eyeVerticalScale = 15f;
+            [Tooltip("眼球の左右回転スケール (度単位)。負値で左右を反転。")]
+            public float eyeHorizontalScale = 15f;
+        }
+
         /// <summary>グループごとの有効フラグとスムージング強度のセット</summary>
         [Serializable]
         public struct GroupSetting
@@ -69,15 +83,7 @@ namespace JayT.Facetracking.Editor.IFacialMocap
                      "左: iFacialMocap名 / 中: 最小値 / 右: 最大値")]
             public LimitEntry[] limiters;
 
-            [Header("Eye Bone")]
-            [Tooltip("左眼球ボーン。eyeLookXxx_L の値で localRotation を制御します。")]
-            public Transform leftEyeBone;
-            [Tooltip("右眼球ボーン。eyeLookXxx_R の値で localRotation を制御します。")]
-            public Transform rightEyeBone;
-            [Tooltip("眼球の上下回転スケール (度単位)。負値で上下を反転。")]
-            public float eyeVerticalScale = 15f;
-            [Tooltip("眼球の左右回転スケール (度単位)。負値で左右を反転。")]
-            public float eyeHorizontalScale = 15f;
+            public EyeBoneSetting eyeBones = new();
         }
 
         [Header("Source")]
@@ -254,8 +260,8 @@ namespace JayT.Facetracking.Editor.IFacialMocap
                     }
                 }
 
-                cache.leftEyeBone  = target.leftEyeBone;
-                cache.rightEyeBone = target.rightEyeBone;
+                cache.leftEyeBone  = target.eyeBones.leftEyeBone;
+                cache.rightEyeBone = target.eyeBones.rightEyeBone;
 
                 avatarCaches.Add(cache);
             }
@@ -411,8 +417,8 @@ namespace JayT.Facetracking.Editor.IFacialMocap
             cache.smoothedEyeOutR  = Mathf.Lerp(cache.smoothedEyeOutR,  cache.eyeOutR,  lerpFactor);
 
             var target = avatarTargets[cache.targetIdx];
-            float vScale = target.eyeVerticalScale;
-            float hScale = target.eyeHorizontalScale;
+            float vScale = target.eyeBones.eyeVerticalScale;
+            float hScale = target.eyeBones.eyeHorizontalScale;
 
             if (cache.leftEyeBone != null)
             {
@@ -623,6 +629,48 @@ namespace JayT.Facetracking.Editor.IFacialMocap
 
         public override float GetPropertyHeight(SerializedProperty property, GUIContent label)
             => EditorGUIUtility.singleLineHeight;
+    }
+
+    [CustomPropertyDrawer(typeof(IFacialMocapBlendShapeApplier.EyeBoneSetting))]
+    public class EyeBoneSettingDrawer : PropertyDrawer
+    {
+        private const int FieldCount = 4;
+
+        public override void OnGUI(Rect position, SerializedProperty property, GUIContent label)
+        {
+            EditorGUI.BeginProperty(position, label, property);
+
+            var foldoutRect = new Rect(position.x, position.y, position.width, EditorGUIUtility.singleLineHeight);
+            property.isExpanded = EditorGUI.Foldout(foldoutRect, property.isExpanded, label, true);
+
+            if (property.isExpanded)
+            {
+                EditorGUI.indentLevel++;
+                float lineH   = EditorGUIUtility.singleLineHeight;
+                float spacing = EditorGUIUtility.standardVerticalSpacing;
+                float y       = position.y + lineH + spacing;
+
+                EditorGUI.PropertyField(new Rect(position.x, y, position.width, lineH), property.FindPropertyRelative("leftEyeBone"));
+                y += lineH + spacing;
+                EditorGUI.PropertyField(new Rect(position.x, y, position.width, lineH), property.FindPropertyRelative("rightEyeBone"));
+                y += lineH + spacing;
+                EditorGUI.PropertyField(new Rect(position.x, y, position.width, lineH), property.FindPropertyRelative("eyeVerticalScale"));
+                y += lineH + spacing;
+                EditorGUI.PropertyField(new Rect(position.x, y, position.width, lineH), property.FindPropertyRelative("eyeHorizontalScale"));
+
+                EditorGUI.indentLevel--;
+            }
+
+            EditorGUI.EndProperty();
+        }
+
+        public override float GetPropertyHeight(SerializedProperty property, GUIContent label)
+        {
+            if (!property.isExpanded) return EditorGUIUtility.singleLineHeight;
+            float lineH   = EditorGUIUtility.singleLineHeight;
+            float spacing = EditorGUIUtility.standardVerticalSpacing;
+            return lineH + (lineH + spacing) * FieldCount;
+        }
     }
 #endif
 }
