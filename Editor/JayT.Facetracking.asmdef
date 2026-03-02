@@ -2,18 +2,15 @@
     "name": "JayT.Facetracking",
     "rootNamespace": "JayT.Facetracking.Editor",
     "references": [
-			
+        "Unity.Timeline"
     ],
-    "includePlatforms": [
-    ],
+    "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,
     "precompiledReferences": [],
     "autoReferenced": true,
-    "defineConstraints": [
-        "Timeline"
-    ],
+    "defineConstraints": [],
     "versionDefines": [],
     "noEngineReferences": false
 }

@@ -1,8 +1,11 @@
 using UnityEngine;
 using UnityEngine.Timeline;
 using UnityEngine.Playables;
+
+#if UNITY_EDITOR
 using UnityEditor;
 using UnityEditor.Animations;
+#endif
 
 /// <summary>
 /// PlayableDirectorの再生/停止イベントに連動して
@@ -17,6 +20,9 @@ using UnityEditor.Animations;
 /// 2. Inspector で各フィールドを設定
 /// 3. Timelineを再生するだけで録画・保存が自動で行われる
 /// </summary>
+///
+///
+namespace JayT.Facetracking.Editor{
 public class FaceAnimationRecorder : MonoBehaviour
 {
     [Header("録画対象")]
@@ -27,15 +33,17 @@ public class FaceAnimationRecorder : MonoBehaviour
     public PlayableDirector director;
 
     [Header("ファイル命名")]
-    [Tooltip("ファイル名の先頭につけるPrefix（例: take01）")]
-    public string prefix = "take01";
+    [Tooltip("ファイル名の先頭につけるPrefix")]
+    public string prefix = "";
 
     [Header("保存先フォルダ")]
     [Tooltip("保存先フォルダ（Assets/以下）")]
     public string saveFolder = "Assets/Recordings";
 
     // 内部状態
+#if UNITY_EDITOR
     private GameObjectRecorder recorder;
+#endif
     private bool isRecording = false;
     private int startFrame = 0;
 
@@ -63,6 +71,7 @@ public class FaceAnimationRecorder : MonoBehaviour
 
     private void OnDirectorPlayed(PlayableDirector pd)
     {
+#if UNITY_EDITOR
         if (isRecording) return;
 
         recorder = new GameObjectRecorder(gameObject);
@@ -72,10 +81,12 @@ public class FaceAnimationRecorder : MonoBehaviour
         isRecording = true;
 
         Debug.Log($"[FaceAnimationRecorder] 録画開始 - frame: {startFrame}");
+#endif
     }
 
     private void OnDirectorStopped(PlayableDirector pd)
     {
+#if UNITY_EDITOR
         if (!isRecording) return;
         isRecording = false;
 
@@ -83,12 +94,15 @@ public class FaceAnimationRecorder : MonoBehaviour
         SaveClip(endFrame);
 
         Debug.Log($"[FaceAnimationRecorder] 録画終了 - frame: {endFrame}");
+#endif
     }
 
     void LateUpdate()
     {
+#if UNITY_EDITOR
         if (!isRecording || recorder == null) return;
         recorder.TakeSnapshot(Time.deltaTime);
+#endif
     }
 
     private void SaveClip(int endFrame)
@@ -131,4 +145,5 @@ public class FaceAnimationRecorder : MonoBehaviour
 
         return Mathf.RoundToInt((float)(time * fps));
     }
+}
 }
