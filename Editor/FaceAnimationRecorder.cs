@@ -241,6 +241,11 @@ namespace JayT.Facetracking.Editor
 
         private bool ValidateSetup()
         {
+            if (!Application.isPlaying)
+            {
+                Debug.LogWarning("[FaceAnimationRecorder] Play Mode でのみ録画できます", this);
+                return false;
+            }
             if (targetRenderer == null)
             {
                 Debug.LogError("[FaceAnimationRecorder] SkinnedMeshRenderer が未設定です", this);
@@ -306,9 +311,17 @@ namespace JayT.Facetracking.Editor
 
             if (!isRec)
             {
-                GUI.backgroundColor = new Color(0.85f, 0.25f, 0.25f);
-                if (GUILayout.Button("●  REC START", GUILayout.Height(40)))
-                    rec.StartRecording();
+                using (new EditorGUI.DisabledScope(!Application.isPlaying))
+                {
+                    GUI.backgroundColor = Application.isPlaying
+                        ? new Color(0.85f, 0.25f, 0.25f)
+                        : Color.gray;
+                    if (GUILayout.Button("●  REC START", GUILayout.Height(40)))
+                        rec.StartRecording();
+                }
+
+                if (!Application.isPlaying)
+                    EditorGUILayout.HelpBox("Play Mode で有効になります", MessageType.None);
             }
             else
             {
