@@ -11,8 +11,8 @@ using UnityEditor.Animations;
 /// BlendShape録画コンポーネント。
 ///
 /// 【保存ファイル名】
-/// {prefix}-{SMR名}-{Timeline名}-s{開始フレーム:D4}-e{終了フレーム:D4}.anim
-/// 例: take01-Face-MyTimeline-s0030-e0090.anim
+/// {prefix}-{SMR名}-{Timeline名}-s{開始フレーム:D4}-e{終了フレーム:D4}-take{N}.anim
+/// 例: avatar-Face-MyTimeline-s0030-e0090-take1.anim
 /// </summary>
 namespace JayT.Facetracking.Editor
 {
@@ -27,7 +27,7 @@ namespace JayT.Facetracking.Editor
         public PlayableDirector director;
 
         [Header("ファイル命名")]
-        [Tooltip("ファイル名Prefix（空白可）例: take01")]
+        [Tooltip("ファイル名Prefix（空白可）例: avatar-name")]
         public string prefix = "";
 
         [Header("保存先")]
@@ -40,6 +40,14 @@ namespace JayT.Facetracking.Editor
 
         // 録画状態（Custom Editor で参照）
         [SerializeField, HideInInspector] private bool isRecording = false;
+
+        // テイク番号（EditorPrefs に保存 → Play Mode 終了でリセットされない）
+        private string TakeKey => $"JayT.FaceAnimationRecorder.NextTake.{Application.dataPath}";
+        public int NextTake
+        {
+            get => EditorPrefs.GetInt(TakeKey, 1);
+            set => EditorPrefs.SetInt(TakeKey, Mathf.Max(1, value));
+        }
 
         // REC START ボタンで明示的に録画を要求したときだけ true になるフラグ
         private bool recordingRequested = false;
@@ -212,9 +220,16 @@ namespace JayT.Facetracking.Editor
             string objectName = targetRenderer.gameObject.name;
             string prefixPart = string.IsNullOrEmpty(prefix) ? "" : $"{prefix}-";
 
-            // s0000-e0000 形式でフレーム範囲をファイル名に含める
-            string fileName = $"{prefixPart}{objectName}-{timelineName}-s{recordingStartFrame:D4}-e{recordingEndFrame:D4}.anim";
-            string savePath = $"{saveFolder}/{fileName}";
+            // テイク番号を自動カウントアップ（既存ファイルと重複しないまで加算）
+            int take = NextTake;
+            string savePath;
+            do
+            {
+                string fileName = $"{prefixPart}{objectName}-{timelineName}-s{recordingStartFrame:D4}-e{recordingEndFrame:D4}-take{take}.anim";
+                savePath = $"{saveFolder}/{fileName}";
+                take++;
+            } while (System.IO.File.Exists(savePath));
+            take--; // ループで余分にインクリメントした分を戻す
 
             AnimationClip clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(savePath);
             if (clip == null)
@@ -225,6 +240,8 @@ namespace JayT.Facetracking.Editor
 
             recorder.SaveToClip(clip, fps);
             AssetDatabase.SaveAssets();
+
+            NextTake = take + 1; // EditorPrefs に永続保存
 
             recorder = null;
             Debug.Log($"[FaceAnimationRecorder] 保存完了: {savePath}  ({recordedDuration:F1}秒 @ {fps}fps)");
@@ -302,7 +319,21 @@ namespace JayT.Facetracking.Editor
                 serializedObject.Update();
                 EditorGUILayout.PropertyField(startFrameProp, new GUIContent("Start Frame", "この位置（フレーム）から Timeline を再生して録画を開始します"));
                 if (startFrameProp.intValue < 0) startFrameProp.intValue = 0;
+
                 serializedObject.ApplyModifiedProperties();
+
+                // テイク番号行（EditorPrefs 経由で永続化）
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUI.BeginChangeCheck();
+                    int newTake = EditorGUILayout.IntField(
+                        new GUIContent("Next Take", "次の録画に付与されるテイク番号 (EditorPrefs に保存)"),
+                        rec.NextTake);
+                    if (EditorGUI.EndChangeCheck())
+                        rec.NextTake = newTake;
+                    if (GUILayout.Button("Reset", GUILayout.Width(50)))
+                        rec.NextTake = 1;
+                }
             }
 
             EditorGUILayout.Space(4);
