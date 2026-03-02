@@ -10,7 +10,7 @@ using System.Collections.Generic;
 using UnityEditor;
 #endif
 
-namespace JayT.Facetracking.Editor
+namespace JayT.Facetracking.Editor.IFacialMocap
 {
     /// <summary>
     /// UDP Receiver for iFacialMocap.

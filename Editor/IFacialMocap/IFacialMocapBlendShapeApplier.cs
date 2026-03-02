@@ -7,7 +7,7 @@ using System.Globalization;
 using UnityEditor;
 #endif
 
-namespace JayT.Facetracking.Editor
+namespace JayT.Facetracking.Editor.IFacialMocap
 {
     /// <summary>
     /// iFacialMocapから受信したデータをアバターのBlendShapeに適用します。
