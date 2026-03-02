@@ -60,6 +60,7 @@ namespace JayT.Facetracking.Editor
         private float recordedDuration;
         private int recordingStartFrame;
         private int recordingEndFrame;
+        private Animator suppressedAnimator; // REC中に無効化したAnimator
 
         // ---- ライフサイクル ----
 
@@ -163,6 +164,15 @@ namespace JayT.Facetracking.Editor
             director.time = startTime;
             director.Evaluate();
 
+            // REC中はAnimatorがblendShapeを上書きしないよう無効化
+            var anim = targetRenderer.GetComponent<Animator>();
+            if (anim != null && anim.enabled)
+            {
+                anim.enabled = false;
+                suppressedAnimator = anim;
+                Debug.Log("[FaceAnimationRecorder] Animator を一時無効化しました（REC終了時に復元）");
+            }
+
             // 録画セットアップ（Evaluate() でブレンドシェイプが確定した後に開始）
             recorder = new GameObjectRecorder(targetRenderer.gameObject);
             recorder.BindComponentsOfType<SkinnedMeshRenderer>(targetRenderer.gameObject, false);
@@ -211,6 +221,7 @@ namespace JayT.Facetracking.Editor
 
             EditorApplication.update -= EditorUpdate;
             isRecording = false;
+            RestoreAnimator();
 
             float fps = GetFps();
             recordingEndFrame = recordingStartFrame + Mathf.RoundToInt(recordedDuration * fps);
@@ -224,7 +235,16 @@ namespace JayT.Facetracking.Editor
             EditorApplication.update -= EditorUpdate;
             isRecording = false;
             recorder = null;
+            RestoreAnimator();
             Debug.LogWarning("[FaceAnimationRecorder] 録画がキャンセルされました（保存されていません）");
+        }
+
+        private void RestoreAnimator()
+        {
+            if (suppressedAnimator == null) return;
+            suppressedAnimator.enabled = true;
+            suppressedAnimator = null;
+            Debug.Log("[FaceAnimationRecorder] Animator を復元しました");
         }
 
         // ---- 保存 ----
@@ -441,7 +461,7 @@ namespace JayT.Facetracking.Editor
                 "【ファイル名】\n" +
                 "{prefix}-{SMR名}-{Timeline名}-s0000-e0000-take1.anim\n\n" +
                 "【Timeline への配置】\n" +
-                "Animation Track のバインド先 = targetRenderer の GameObject",
+                "Animation Track のバインド先 = targetRenderer の GameObject(animatorが必要)",
                 MessageType.Info);
         }
 
