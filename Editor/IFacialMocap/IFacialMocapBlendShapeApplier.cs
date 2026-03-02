@@ -70,8 +70,6 @@ namespace JayT.Facetracking.Editor.IFacialMocap
             public LimitEntry[] limiters;
 
             [Header("Eye Bone")]
-            [Tooltip("このアバターの眼球ボーン回転を有効にする")]
-            public bool enableEyeBone = true;
             [Tooltip("左眼球ボーン。eyeLookXxx_L の値で localRotation を制御します。")]
             public Transform leftEyeBone;
             [Tooltip("右眼球ボーン。eyeLookXxx_R の値で localRotation を制御します。")]
@@ -398,9 +396,6 @@ namespace JayT.Facetracking.Editor.IFacialMocap
         {
             if (!eyeBone.enabled) return;
 
-            var target = avatarTargets[cache.targetIdx];
-            if (!target.enableEyeBone) return;
-
             if (cache.leftEyeBone == null && cache.rightEyeBone == null) return;
 
             float s = eyeBone.smoothing;
@@ -415,6 +410,7 @@ namespace JayT.Facetracking.Editor.IFacialMocap
             cache.smoothedEyeInR   = Mathf.Lerp(cache.smoothedEyeInR,   cache.eyeInR,   lerpFactor);
             cache.smoothedEyeOutR  = Mathf.Lerp(cache.smoothedEyeOutR,  cache.eyeOutR,  lerpFactor);
 
+            var target = avatarTargets[cache.targetIdx];
             float vScale = target.eyeVerticalScale;
             float hScale = target.eyeHorizontalScale;
 
