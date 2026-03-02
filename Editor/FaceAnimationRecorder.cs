@@ -23,8 +23,13 @@ namespace JayT.Facetracking.Editor
         [Tooltip("BlendShapeを持つSkinnedMeshRenderer")]
         public SkinnedMeshRenderer targetRenderer;
 
-        [Header("Timeline連携（必須）")]
-        public PlayableDirector director;
+        // CustomEditor で描画するため HideInInspector
+        // 同シーンならシリアライズ参照として保持、別シーンは下記2フィールドで管理
+        [HideInInspector] public PlayableDirector director;
+
+        // クロスシーン参照の永続化（シーン名＋オブジェクト名で Play Mode 時に解決）
+        [SerializeField, HideInInspector] private string directorSceneName = "";
+        [SerializeField, HideInInspector] private string directorObjectName = "";
 
         [Header("ファイル命名")]
         [Tooltip("ファイル名Prefix（空白可）例: avatar-name")]
@@ -57,16 +62,45 @@ namespace JayT.Facetracking.Editor
 
         // ---- ライフサイクル ----
 
-        /// <summary>Play Mode 開始時に director の自動再生（Play On Awake）を停止する</summary>
+        /// <summary>Play Mode 開始時に director を解決し、自動再生（Play On Awake）を停止する</summary>
         void Start()
         {
             if (!Application.isPlaying) return;
+
+            // director が未解決の場合、シーン名＋オブジェクト名で全ロード済みシーンを検索
+            if (director == null)
+                TryFindDirector();
+
             if (director == null) return;
             if (director.state == PlayState.Playing)
             {
                 director.Stop();
                 Debug.Log("[FaceAnimationRecorder] director の自動再生（Play On Awake）を停止しました");
             }
+        }
+
+        /// <summary>シーン名＋オブジェクト名で PlayableDirector を検索して director に設定する</summary>
+        private void TryFindDirector()
+        {
+            if (string.IsNullOrEmpty(directorObjectName))
+            {
+                Debug.LogWarning("[FaceAnimationRecorder] Director が未設定です。Inspector で PlayableDirector をアサインしてください");
+                return;
+            }
+
+            foreach (var d in FindObjectsOfType<PlayableDirector>(true))
+            {
+                bool sceneMatch = string.IsNullOrEmpty(directorSceneName) || d.gameObject.scene.name == directorSceneName;
+                if (sceneMatch && d.gameObject.name == directorObjectName)
+                {
+                    director = d;
+                    SubscribeDirector(director);
+                    Debug.Log($"[FaceAnimationRecorder] PlayableDirector を取得: '{d.gameObject.name}' (scene: '{d.gameObject.scene.name}')");
+                    return;
+                }
+            }
+
+            Debug.LogWarning($"[FaceAnimationRecorder] PlayableDirector '{directorObjectName}' が見つかりません（シーン '{directorSceneName}' がロードされているか確認）");
         }
 
         void OnEnable()
@@ -280,10 +314,14 @@ namespace JayT.Facetracking.Editor
     public class FaceAnimationRecorderEditor : UnityEditor.Editor
     {
         private SerializedProperty startFrameProp;
+        private SerializedProperty sceneNameProp;
+        private SerializedProperty objectNameProp;
 
         void OnEnable()
         {
-            startFrameProp = serializedObject.FindProperty("startFrame");
+            startFrameProp  = serializedObject.FindProperty("startFrame");
+            sceneNameProp   = serializedObject.FindProperty("directorSceneName");
+            objectNameProp  = serializedObject.FindProperty("directorObjectName");
             EditorApplication.update += Repaint;
         }
 
@@ -294,18 +332,32 @@ namespace JayT.Facetracking.Editor
 
         public override void OnInspectorGUI()
         {
-            DrawDefaultInspector();
+            var rec = (FaceAnimationRecorder)target;
+            serializedObject.Update();
+
+            // ---- 録画対象 ----
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("targetRenderer"));
+
+            // ---- Timeline連携 ----
+            EditorGUILayout.Space(4);
+            EditorGUILayout.LabelField("Timeline連携", EditorStyles.boldLabel);
+
+            DrawDirectorField(rec);
+
+            // ---- その他フィールド ----
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("prefix"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("saveFolder"));
+
+            serializedObject.ApplyModifiedProperties();
 
             EditorGUILayout.Space(10);
             EditorGUILayout.LabelField("録画コントロール", EditorStyles.boldLabel);
 
-            var rec = (FaceAnimationRecorder)target;
             bool isRec = rec.IsRecording;
 
             // 録画中はフレーム入力を無効化
             using (new EditorGUI.DisabledScope(isRec))
             {
-                serializedObject.Update();
                 EditorGUILayout.PropertyField(startFrameProp, new GUIContent("Start Frame", "この位置（フレーム）から Timeline を再生して録画を開始します"));
                 if (startFrameProp.intValue < 0) startFrameProp.intValue = 0;
                 serializedObject.ApplyModifiedProperties();
@@ -366,6 +418,78 @@ namespace JayT.Facetracking.Editor
                 "【Timeline への配置】\n" +
                 "Animation Track のバインド先 = targetRenderer の GameObject",
                 MessageType.Info);
+        }
+
+        /// <summary>
+        /// クロスシーン対応 Director ピッカーを描画する。
+        /// ドラッグ時にシーン名＋オブジェクト名を保存し、表示もそれで解決する。
+        /// </summary>
+        private void DrawDirectorField(FaceAnimationRecorder rec)
+        {
+            // 表示用オブジェクトの解決:
+            //   Play Mode → runtime で解決済みの rec.director を優先
+            //   Edit Mode → シーン名＋オブジェクト名で FindObjectsOfType して逆引き
+            PlayableDirector displayDirector = rec.director;
+            if (displayDirector == null && !string.IsNullOrEmpty(objectNameProp.stringValue))
+            {
+                foreach (var d in FindObjectsOfType<PlayableDirector>(true))
+                {
+                    bool sceneMatch = string.IsNullOrEmpty(sceneNameProp.stringValue) || d.gameObject.scene.name == sceneNameProp.stringValue;
+                    if (sceneMatch && d.gameObject.name == objectNameProp.stringValue)
+                    {
+                        displayDirector = d;
+                        break;
+                    }
+                }
+            }
+
+            var label = new GUIContent(
+                "Director",
+                "PlayableDirectorをここにドラッグ（別シーンでも可）\n" +
+                "→ シーン名＋オブジェクト名を保存し、Play Mode開始時に自動解決されます");
+
+            EditorGUI.BeginChangeCheck();
+            var picked = (PlayableDirector)EditorGUILayout.ObjectField(label, displayDirector, typeof(PlayableDirector), true);
+
+            if (EditorGUI.EndChangeCheck())
+            {
+                if (picked != null)
+                {
+                    sceneNameProp.stringValue  = picked.gameObject.scene.name;
+                    objectNameProp.stringValue = picked.gameObject.name;
+                    // 同シーンなら director フィールドにも直接保持
+                    rec.director = picked.gameObject.scene == rec.gameObject.scene ? picked : null;
+                }
+                else
+                {
+                    sceneNameProp.stringValue  = "";
+                    objectNameProp.stringValue = "";
+                    rec.director = null;
+                }
+                serializedObject.ApplyModifiedProperties();
+                EditorUtility.SetDirty(rec);
+            }
+
+            // 別シーン参照の場合はシーン名とオブジェクト名を補足表示
+            if (displayDirector != null && rec.director == null)
+            {
+                EditorGUI.indentLevel++;
+                using (new EditorGUI.DisabledScope(true))
+                {
+                    EditorGUILayout.LabelField("Scene",  sceneNameProp.stringValue,  EditorStyles.miniLabel);
+                    EditorGUILayout.LabelField("Object", objectNameProp.stringValue, EditorStyles.miniLabel);
+                }
+                EditorGUI.indentLevel--;
+            }
+
+            // 未設定の場合は案内を表示
+            if (string.IsNullOrEmpty(objectNameProp.stringValue))
+            {
+                EditorGUILayout.HelpBox(
+                    "未設定です。\n" +
+                    "マルチシーン編集中に別シーンのPlayableDirectorをドラッグできます。",
+                    MessageType.Info);
+            }
         }
     }
 #endif
