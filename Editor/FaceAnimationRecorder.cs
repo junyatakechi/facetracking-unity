@@ -226,7 +226,10 @@ namespace JayT.Facetracking.Editor
             float fps = GetFps();
             recordingEndFrame = recordingStartFrame + Mathf.RoundToInt(recordedDuration * fps);
 
-            SaveClip();
+            // isSaving を先に立てて Inspector が「保存中...」を表示できるようにしてから
+            // 次フレームで重い保存処理を実行する
+            isSaving = true;
+            EditorApplication.delayCall += SaveClip;
         }
 
         private void CancelRecording()
@@ -282,8 +285,6 @@ namespace JayT.Facetracking.Editor
                 clip = new AnimationClip();
                 AssetDatabase.CreateAsset(clip, savePath);
             }
-
-            isSaving = true;
 
             recorder.SaveToClip(clip, fps);
 
