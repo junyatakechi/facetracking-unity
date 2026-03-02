@@ -262,6 +262,14 @@ namespace JayT.Facetracking.Editor
             }
 
             recorder.SaveToClip(clip, fps);
+
+            // BlendShape 以外のカーブを削除する
+            foreach (var binding in AnimationUtility.GetCurveBindings(clip))
+            {
+                if (!binding.propertyName.StartsWith("blendShape."))
+                    AnimationUtility.SetEditorCurve(clip, binding, null);
+            }
+
             AssetDatabase.SaveAssets();
 
             NextTake = take + 1; // EditorPrefs に永続保存
