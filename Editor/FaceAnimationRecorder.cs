@@ -49,9 +49,6 @@ namespace JayT.Facetracking.Editor
             set => EditorPrefs.SetInt(TakeKey, Mathf.Max(1, value));
         }
 
-        // REC START ボタンで明示的に録画を要求したときだけ true になるフラグ
-        private bool recordingRequested = false;
-
         private GameObjectRecorder recorder;
         private double lastEditorTime;
         private float recordedDuration;
@@ -88,14 +85,12 @@ namespace JayT.Facetracking.Editor
         private void SubscribeDirector(PlayableDirector d)
         {
             if (d == null) return;
-            d.played += OnDirectorPlayed;
             d.stopped += OnDirectorStopped;
         }
 
         private void UnsubscribeDirector(PlayableDirector d)
         {
             if (d == null) return;
-            d.played -= OnDirectorPlayed;
             d.stopped -= OnDirectorStopped;
         }
 
@@ -103,7 +98,7 @@ namespace JayT.Facetracking.Editor
 
         public bool IsRecording => isRecording;
 
-        /// <summary>REC START: startFrame から Timeline を再生し録画を開始する</summary>
+        /// <summary>REC START: startFrame から Timeline を再生して録画を開始する</summary>
         public void StartRecording()
         {
             if (!ValidateSetup()) return;
@@ -113,20 +108,28 @@ namespace JayT.Facetracking.Editor
                 return;
             }
 
-            float fps = GetFps();
-            double startTime = startFrame / (double)fps;
-
             // director が入れ替わっている場合に備えて再登録
             UnsubscribeDirector(director);
             SubscribeDirector(director);
 
-            recordingRequested = true;
+            double startTime = startFrame / (double)GetFps();
+
+            // Play() でグラフを初期化した後に time を設定する
+            // （Play() より前に設定するとグラフ再構築時にリセットされる場合がある）
             director.Play();
-            // Play() がグラフを初期化した後に時刻を設定する
-            // （Play() より前に設定するとグラフ再構築時にリセットされる）
             director.time = startTime;
-            director.Evaluate(); // 強制的に startTime の位置へシーク
-            // 以降は OnDirectorPlayed が録画を開始する
+            director.Evaluate(); // startFrame の位置に強制シーク
+
+            // 録画セットアップ（Evaluate() でブレンドシェイプが確定した後に開始）
+            recorder = new GameObjectRecorder(targetRenderer.gameObject);
+            recorder.BindComponentsOfType<SkinnedMeshRenderer>(targetRenderer.gameObject, false);
+            isRecording = true;
+            recordedDuration = 0f;
+            recordingStartFrame = startFrame;
+            lastEditorTime = EditorApplication.timeSinceStartup;
+            EditorApplication.update += EditorUpdate;
+
+            Debug.Log($"[FaceAnimationRecorder] 録画開始 (s{recordingStartFrame:D4})");
         }
 
         /// <summary>STOP & SAVE: director を停止し録画データを保存する</summary>
@@ -142,27 +145,6 @@ namespace JayT.Facetracking.Editor
         }
 
         // ---- 録画コア ----
-
-        private void OnDirectorPlayed(PlayableDirector pd)
-        {
-            // REC START ボタン経由の再生でなければ録画しない
-            if (!recordingRequested) return;
-            recordingRequested = false;
-
-            if (isRecording) return;
-
-            recorder = new GameObjectRecorder(targetRenderer.gameObject);
-            recorder.BindComponentsOfType<SkinnedMeshRenderer>(targetRenderer.gameObject, false);
-
-            isRecording = true;
-            recordedDuration = 0f;
-            recordingStartFrame = startFrame;
-            lastEditorTime = EditorApplication.timeSinceStartup;
-
-            EditorApplication.update += EditorUpdate;
-
-            Debug.Log($"[FaceAnimationRecorder] 録画開始 (s{recordingStartFrame:D4})");
-        }
 
         private void EditorUpdate()
         {
@@ -319,7 +301,6 @@ namespace JayT.Facetracking.Editor
                 serializedObject.Update();
                 EditorGUILayout.PropertyField(startFrameProp, new GUIContent("Start Frame", "この位置（フレーム）から Timeline を再生して録画を開始します"));
                 if (startFrameProp.intValue < 0) startFrameProp.intValue = 0;
-
                 serializedObject.ApplyModifiedProperties();
 
                 // テイク番号行（EditorPrefs 経由で永続化）
@@ -374,7 +355,7 @@ namespace JayT.Facetracking.Editor
                 "   → Timeline がその位置から再生・録画開始\n" +
                 "3. Timeline 終端 または STOP & SAVE で自動保存\n\n" +
                 "【ファイル名】\n" +
-                "{prefix}-{SMR名}-{Timeline名}-s0000-e0000.anim\n\n" +
+                "{prefix}-{SMR名}-{Timeline名}-s0000-e0000-take1.anim\n\n" +
                 "【Timeline への配置】\n" +
                 "Animation Track のバインド先 = targetRenderer の GameObject",
                 MessageType.Info);
