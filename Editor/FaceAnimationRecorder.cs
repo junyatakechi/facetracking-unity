@@ -2,7 +2,6 @@ using UnityEngine;
 using UnityEngine.Timeline;
 using UnityEngine.Playables;
 using System.Collections.Generic;
-
 #if UNITY_EDITOR
 using UnityEditor;
 using UnityEditor.Animations;
@@ -48,6 +47,10 @@ namespace JayT.Facetracking.Editor
         public string saveFolder = "Assets/Recordings";
 
 #if UNITY_EDITOR
+        [Header("Group Filter (オプション)")]
+        [Tooltip("無効にしたグループのカーブを録画クリップから除去するApplierを指定します")]
+        public IFacialMocap.IFacialMocapBlendShapeApplier blendShapeApplier;
+
         // 録画開始フレーム（Inspector の録画コントロール欄に表示）
         [SerializeField, HideInInspector] private int startFrame = 0;
 
@@ -178,6 +181,8 @@ namespace JayT.Facetracking.Editor
                 rec.BindComponentsOfType<SkinnedMeshRenderer>(entry.renderer.gameObject, false);
                 activeRecordings.Add((rec, entry));
             }
+
+            blendShapeApplier?.writtenBlendShapes.Clear();
 
             isRecording = true;
             recordedDuration = 0f;
@@ -338,6 +343,18 @@ namespace JayT.Facetracking.Editor
                     if (!binding.propertyName.StartsWith("blendShape."))
                         AnimationUtility.SetEditorCurve(clip, binding, null);
                 }
+
+                // 録画中に一度も書き込まれなかったBlendShapeカーブを削除（無効グループ等）
+                if (blendShapeApplier != null && blendShapeApplier.writtenBlendShapes.Count > 0)
+                {
+                    foreach (var binding in AnimationUtility.GetCurveBindings(clip))
+                    {
+                        if (!binding.propertyName.StartsWith("blendShape.")) continue;
+                        string bsName = binding.propertyName.Substring("blendShape.".Length);
+                        if (!blendShapeApplier.writtenBlendShapes.Contains(bsName))
+                            AnimationUtility.SetEditorCurve(clip, binding, null);
+                    }
+                }
                 // オブジェクト参照カーブを削除（マテリアル参照等）
                 foreach (var binding in AnimationUtility.GetObjectReferenceCurveBindings(clip))
                     AnimationUtility.SetObjectReferenceCurve(clip, binding, null);
@@ -442,6 +459,7 @@ namespace JayT.Facetracking.Editor
 
             // ---- その他フィールド ----
             EditorGUILayout.PropertyField(serializedObject.FindProperty("saveFolder"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("blendShapeApplier"));
 
             serializedObject.ApplyModifiedProperties();
 

@@ -114,6 +114,9 @@ namespace JayT.Facetracking.Editor.IFacialMocap
         [Tooltip("眼球ボーン回転 (全アバター共通)")]
         public GroupSetting eyeBone = new GroupSetting { enabled = true };
 
+        // 録画セッション中に実際に書き込まれたブレンドシェイプ名（FaceAnimationRecorder が参照する）
+        public readonly HashSet<string> writtenBlendShapes = new HashSet<string>();
+
         // iFacialMocap省略名 (_L/_R) → ARKit標準名 (Left/Right) の固定マッピング
         private static readonly Dictionary<string, string> NameMapping = new Dictionary<string, string>
         {
@@ -378,8 +381,9 @@ namespace JayT.Facetracking.Editor.IFacialMocap
             if (!cache.blendShapeIndex.ContainsKey(blendShapeName))
                 return false;
 
-            cache.targetValues[blendShapeName]   = Mathf.Clamp(val, 0f, 100f);
+            cache.targetValues[blendShapeName]    = Mathf.Clamp(val, 0f, 100f);
             cache.targetSmoothing[blendShapeName] = groupSmoothing;
+            writtenBlendShapes.Add(blendShapeName);
             return true;
         }
 
