@@ -66,7 +66,7 @@ namespace JayT.Facetracking.Editor
         // 録画中の Recorder・Entry ペア（StartRecording で確定）
         private List<(GameObjectRecorder recorder, RendererEntry entry)> activeRecordings
             = new List<(GameObjectRecorder, RendererEntry)>();
-        private double lastEditorTime;
+        private double lastRecordedTime;
         private float recordedDuration;
         private int recordingStartFrame;
         private int recordingEndFrame;
@@ -164,8 +164,8 @@ namespace JayT.Facetracking.Editor
             {
                 if (!entry.enabled || entry.renderer == null) continue;
 
-                // REC中はAnimatorがblendShapeを上書きしないよう無効化
-                var anim = entry.renderer.GetComponent<Animator>();
+                // REC中はAnimatorがblendShapeを上書きしないよう無効化（親階層も検索）
+                var anim = entry.renderer.GetComponentInParent<Animator>();
                 if (anim != null && anim.enabled)
                 {
                     anim.enabled = false;
@@ -182,7 +182,7 @@ namespace JayT.Facetracking.Editor
             isRecording = true;
             recordedDuration = 0f;
             recordingStartFrame = startFrame;
-            lastEditorTime = EditorApplication.timeSinceStartup;
+            lastRecordedTime = 0.0;
             EditorApplication.update += EditorUpdate;
 
             Debug.Log($"[FaceAnimationRecorder] 録画開始 ({activeRecordings.Count}対象, s{recordingStartFrame:D4})");
@@ -204,16 +204,17 @@ namespace JayT.Facetracking.Editor
 
         private void EditorUpdate()
         {
-            if (!isRecording || activeRecordings.Count == 0)
+            if (!isRecording || activeRecordings.Count == 0 || director == null)
             {
                 EditorApplication.update -= EditorUpdate;
                 return;
             }
 
-            double now = EditorApplication.timeSinceStartup;
-            float dt = (float)(now - lastEditorTime);
-            lastEditorTime = now;
-            recordedDuration += dt;
+            double elapsed = director.time - (recordingStartFrame / (double)GetFps());
+            float dt = (float)(elapsed - lastRecordedTime);
+            if (dt <= 0f) return;
+            lastRecordedTime = elapsed;
+            recordedDuration = (float)elapsed;
 
             foreach (var (rec, _) in activeRecordings)
                 rec.TakeSnapshot(dt);
@@ -221,7 +222,7 @@ namespace JayT.Facetracking.Editor
 
         private void OnDirectorStopped(PlayableDirector pd)
         {
-            if (!isRecording) return;
+            if (!isRecording || pd != director) return;
 
             EditorApplication.update -= EditorUpdate;
             isRecording = false;
@@ -306,6 +307,31 @@ namespace JayT.Facetracking.Editor
 
                 rec.SaveToClip(clip, fps);
 
+                // Auto タンジェントのオーバーシュートを抑制し、負値を 0 にクランプする
+                foreach (var binding in AnimationUtility.GetCurveBindings(clip))
+                {
+                    if (!binding.propertyName.StartsWith("blendShape.")) continue;
+                    var curve = AnimationUtility.GetEditorCurve(clip, binding);
+                    if (curve == null) continue;
+                    var keys = curve.keys;
+                    for (int k = 0; k < keys.Length; k++)
+                    {
+                        if (keys[k].value < 0f)
+                        {
+                            var kf = keys[k];
+                            kf.value = 0f;
+                            keys[k] = kf;
+                        }
+                    }
+                    curve.keys = keys;
+                    for (int k = 0; k < curve.length; k++)
+                    {
+                        AnimationUtility.SetKeyLeftTangentMode(curve, k,  AnimationUtility.TangentMode.ClampedAuto);
+                        AnimationUtility.SetKeyRightTangentMode(curve, k, AnimationUtility.TangentMode.ClampedAuto);
+                    }
+                    AnimationUtility.SetEditorCurve(clip, binding, curve);
+                }
+
                 // BlendShape 以外の float カーブを削除（ボーン等）
                 foreach (var binding in AnimationUtility.GetCurveBindings(clip))
                 {
@@ -353,7 +379,7 @@ namespace JayT.Facetracking.Editor
             bool hasValidRenderer = false;
             if (targets != null)
                 foreach (var entry in targets)
-                    if (entry.renderer != null) { hasValidRenderer = true; break; }
+                    if (entry.enabled && entry.renderer != null) { hasValidRenderer = true; break; }
             if (!hasValidRenderer)
             {
                 Debug.LogError("[FaceAnimationRecorder] 有効な SkinnedMeshRenderer が設定されていません", this);

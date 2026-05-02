@@ -303,8 +303,8 @@ namespace JayT.Facetracking.Editor.IFacialMocap
 
                 foreach (var cache in avatarCaches)
                 {
-                    ApplyToAvatar(cache, ifmName, val);
-                    UpdateEyeLookAccum(cache, ifmName, val);
+                    float effective = ApplyToAvatar(cache, ifmName, val);
+                    UpdateEyeLookAccum(cache, ifmName, effective);
                 }
             }
 
@@ -336,7 +336,7 @@ namespace JayT.Facetracking.Editor.IFacialMocap
             return 0f;
         }
 
-        private void ApplyToAvatar(AvatarCache cache, string ifmName, float val)
+        private float ApplyToAvatar(AvatarCache cache, string ifmName, float val)
         {
             float groupSmoothing = GetGroupSmoothing(ifmName);
 
@@ -348,7 +348,9 @@ namespace JayT.Facetracking.Editor.IFacialMocap
                 {
                     if (limiters[i].ifmName == ifmName)
                     {
-                        val = Mathf.Clamp(val, limiters[i].min, limiters[i].max);
+                        // initialized=false（Inspector を経由せず生成）の場合、max のデフォルトは 100
+                        float limMax = limiters[i].initialized ? limiters[i].max : 100f;
+                        val = Mathf.Clamp(val, limiters[i].min, limMax);
                         break;
                     }
                 }
@@ -358,15 +360,17 @@ namespace JayT.Facetracking.Editor.IFacialMocap
             if (cache.overrideMap.TryGetValue(ifmName, out string overrideName))
             {
                 TryApply(cache, overrideName, val, groupSmoothing);
-                return;
+                return val;
             }
 
             // 直接マッチ
-            if (TryApply(cache, ifmName, val, groupSmoothing)) return;
+            if (TryApply(cache, ifmName, val, groupSmoothing)) return val;
 
             // 固定マッピングテーブル
             if (NameMapping.TryGetValue(ifmName, out string arKitName))
                 TryApply(cache, arKitName, val, groupSmoothing);
+
+            return val;
         }
 
         private bool TryApply(AvatarCache cache, string blendShapeName, float val, float groupSmoothing)
@@ -382,16 +386,17 @@ namespace JayT.Facetracking.Editor.IFacialMocap
         // eyeLookXxx 系のパラメーターのみアキュムレーターに積む (_L/_R と Left/Right 両形式対応)
         private static void UpdateEyeLookAccum(AvatarCache cache, string ifmName, float val)
         {
+            float v = Mathf.Clamp(val, 0f, 100f);
             switch (ifmName)
             {
-                case "eyeLookUp_L":    case "eyeLookUpLeft":    cache.eyeUpL   = val; break;
-                case "eyeLookDown_L":  case "eyeLookDownLeft":  cache.eyeDownL = val; break;
-                case "eyeLookIn_L":    case "eyeLookInLeft":    cache.eyeInL   = val; break;
-                case "eyeLookOut_L":   case "eyeLookOutLeft":   cache.eyeOutL  = val; break;
-                case "eyeLookUp_R":    case "eyeLookUpRight":   cache.eyeUpR   = val; break;
-                case "eyeLookDown_R":  case "eyeLookDownRight": cache.eyeDownR = val; break;
-                case "eyeLookIn_R":    case "eyeLookInRight":   cache.eyeInR   = val; break;
-                case "eyeLookOut_R":   case "eyeLookOutRight":  cache.eyeOutR  = val; break;
+                case "eyeLookUp_L":    case "eyeLookUpLeft":    cache.eyeUpL   = v; break;
+                case "eyeLookDown_L":  case "eyeLookDownLeft":  cache.eyeDownL = v; break;
+                case "eyeLookIn_L":    case "eyeLookInLeft":    cache.eyeInL   = v; break;
+                case "eyeLookOut_L":   case "eyeLookOutLeft":   cache.eyeOutL  = v; break;
+                case "eyeLookUp_R":    case "eyeLookUpRight":   cache.eyeUpR   = v; break;
+                case "eyeLookDown_R":  case "eyeLookDownRight": cache.eyeDownR = v; break;
+                case "eyeLookIn_R":    case "eyeLookInRight":   cache.eyeInR   = v; break;
+                case "eyeLookOut_R":   case "eyeLookOutRight":  cache.eyeOutR  = v; break;
             }
         }
 
